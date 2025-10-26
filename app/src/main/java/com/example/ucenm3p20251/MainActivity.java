@@ -5,7 +5,15 @@ import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteDatabase;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Base64;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -13,10 +21,13 @@ import android.widget.ImageView;
 import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -24,6 +35,7 @@ import androidx.core.view.WindowInsetsCompat;
 import com.example.ucenm3p20251.configuraciones.SQLiteConexion;
 import com.example.ucenm3p20251.configuraciones.Transacciones;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 
 public class MainActivity extends AppCompatActivity {
@@ -36,6 +48,8 @@ public class MainActivity extends AppCompatActivity {
     private static final int PERMISO_CAMARA = 101;
     private String fotoBase64 = null;
     private File fotoFile;
+
+    ActivityResultLauncher<Intent> tomarFotoLauncher;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,7 +94,66 @@ public class MainActivity extends AppCompatActivity {
         });
 
 
+        tomarFotoLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() == RESULT_OK) {
+                        if (fotoFile != null && fotoFile.exists()) {
+                            try {
+                                // Cargar el bitmap desde el archivo
+                                Bitmap foto = BitmapFactory.decodeFile(fotoFile.getAbsolutePath());
 
+                                // Leer orientación EXIF
+                                ExifInterface exif = new ExifInterface(fotoFile.getAbsolutePath());
+                                int orientation = exif.getAttributeInt(
+                                        ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+                                int rotationInDegrees = exifToDegrees(orientation);
+
+                                // Rotar bitmap si es necesario
+                                Bitmap rotatedBitmap = foto;
+                                if (rotationInDegrees != 0) {
+                                    Matrix matrix = new Matrix();
+                                    matrix.preRotate(rotationInDegrees);
+                                    rotatedBitmap = Bitmap.createBitmap(foto, 0, 0,
+                                            foto.getWidth(), foto.getHeight(), matrix, true);
+                                }
+
+                                // Mostrar en ImageView
+                                imageView.setImageBitmap(rotatedBitmap);
+
+                                // Convertir a Base64
+                                fotoBase64 = bitmapToBase64(rotatedBitmap);
+
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                                Toast.makeText(MainActivity.this, "Error al procesar la foto", Toast.LENGTH_LONG).show();
+                            }
+                        } else {
+                            Toast.makeText(MainActivity.this, "No se pudo obtener la foto", Toast.LENGTH_LONG).show();
+                        }
+                    }
+           }
+                );
+
+
+
+    }
+
+    private String bitmapToBase64(Bitmap bitmap)
+    {
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
+        byte[] byteArray = outputStream.toByteArray();
+        return Base64.encodeToString(byteArray, Base64.DEFAULT);
+    }
+
+    private int exifToDegrees(int exifOrientation) {
+        switch (exifOrientation) {
+            case ExifInterface.ORIENTATION_ROTATE_90: return 90;
+            case ExifInterface.ORIENTATION_ROTATE_180: return 180;
+            case ExifInterface.ORIENTATION_ROTATE_270: return 270;
+            default: return 0;
+        }
     }
 
     private void Permisos() {
@@ -113,7 +186,23 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void OpenCamara() {
+    private void OpenCamara()
+    {
+        try {
+            // Crear archivo temporal
+            fotoFile = new File(getExternalFilesDir(Environment.DIRECTORY_PICTURES),
+                    "foto_" + System.currentTimeMillis() + ".jpg");
+            Uri fotoUri = FileProvider.getUriForFile(this,
+                    "com.example.ucenm3p20251.provider", fotoFile);
+
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, fotoUri);
+            tomarFotoLauncher.launch(intent);
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            Toast.makeText(this, "Error al abrir cámara: " + ex.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void AddPersona()
@@ -126,7 +215,7 @@ public class MainActivity extends AppCompatActivity {
         valores.put(Transacciones.apellidos, apellidos.getText().toString());
         valores.put(Transacciones.edad,Integer.parseInt(edad.getText().toString()));
         valores.put(Transacciones.correo, correo.getText().toString());
-        valores.put(Transacciones.foto, "");
+        valores.put(Transacciones.foto,fotoBase64);
 
         long resultado = db.insert(Transacciones.TablePersonas, null, valores);
 
